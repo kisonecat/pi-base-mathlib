@@ -1,5 +1,6 @@
 import PiBase
 import PiBase.Property
+import PiBase.Theorem
 
 import Lean
 import Cli
@@ -9,6 +10,7 @@ open Lean Cli
 unsafe def runVerifyCmd (p : Parsed) : IO UInt32 := do
   let rootPath : System.FilePath := "data"
   let propertiesPath := rootPath.join "properties"
+  let theoremsPath := rootPath.join "theorems"
   let props ← PiBase.readProperties propertiesPath
   
   Std.HashMap.forM (fun k v => do
@@ -16,6 +18,8 @@ unsafe def runVerifyCmd (p : Parsed) : IO UInt32 := do
       IO.println s!"{k} := {m}"
   ) props
   
+  let theorems ← PiBase.readTheorems theoremsPath
+
   return 0
 
 unsafe def verify := `[Cli|

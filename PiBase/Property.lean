@@ -5,6 +5,7 @@ import Lean.Environment
 import Mathlib
 
 import PiBase.Reference
+import PiBase.Logging
 
 import Std.Lean.Util.Path
 
@@ -25,12 +26,12 @@ open Property
 
 open Lean.Parsec
 
-def parseText : Lean.Parsec (Property → Property) := attempt do
+private def parseText : Lean.Parsec (Property → Property) := attempt do
   skipString "---\n"
   let t ← manyChars anyChar
   pure $ λ p => { p with text := t }
 
-def parseAlias : Lean.Parsec String := do
+private def parseAlias : Lean.Parsec String := do
   ws
   skipChar '-'
   ws
@@ -38,31 +39,31 @@ def parseAlias : Lean.Parsec String := do
   skipChar '\n'
   pure $ n
 
-def parseReferences' : Lean.Parsec (Property → Property) := attempt do
+private def parseReferences' : Lean.Parsec (Property → Property) := attempt do
   let xs ← parseReferences
   pure $ λ p => { p with refs := xs }
 
-def parseAliases : Lean.Parsec (Property → Property) := attempt do
+private def parseAliases : Lean.Parsec (Property → Property) := attempt do
   skipString "aliases:"
   ws
   let xs ← many $ parseAlias
   pure $ λ p => { p with aliases := xs.toList }
 
-def parseName : Lean.Parsec (Property → Property) := attempt do
+private def parseName : Lean.Parsec (Property → Property) := attempt do
   skipString "name:"
   ws
-  let n ← manyChars (satisfy (fun c => c != '\n'))
+  let n ← manyChars (satisfy (· != '\n'))
   skipChar '\n'
   pure $ λ p => { p with name := some n }
 
-def parseMathlib : Lean.Parsec (Property → Property) := attempt do
+private def parseMathlib : Lean.Parsec (Property → Property) := attempt do
   skipString "mathlib:"
   ws
   let n ← manyChars (satisfy (fun c => c != '\n'))
   skipChar '\n'
   pure $ λ p => { p with mathlib := some n }
 
-def parseUid : Lean.Parsec Property := do
+private def parseUid : Lean.Parsec Property := do
   skipString "uid:"
   ws
   skipChar 'P'
@@ -73,28 +74,18 @@ def parseUid : Lean.Parsec Property := do
   | none => λ it => ParseResult.error it s!"could not parse number {d}"
   | some i => λ it => ParseResult.success it { uid := i : Property }
 
-def propertyParser : Lean.Parsec Property := do
+private def propertyParser : Lean.Parsec Property := do
+  Lean.Parsec.skipString "---\n"
   let p ← parseUid
   let fs ← many (parseAliases <|> parseName <|> parseReferences' <|> parseText <|> parseMathlib)
   pure $ fs.foldl (fun x f => f x) p
 
-def parser : Lean.Parsec Property := do 
-  Lean.Parsec.skipString "---\n"
-  let p ← propertyParser
-  pure $ p
-  
 -- Function to read the content of a single file into a string
-def readFileContents (path : System.FilePath) : IO (Except String Property) := do
+private def readFileContents (path : System.FilePath) : IO (Except String Property) := do
   IO.FS.withFile path IO.FS.Mode.read fun handle => do
     let s ← handle.readToEnd
-    let result := Lean.Parsec.run parser s
+    let result := Lean.Parsec.run propertyParser s
     pure result
-
-def listFiles (path : System.FilePath) : IO Unit := do
-  let entries <- path.readDir
-  -- Iterate over the contents and print file names
-  for entry in entries do
-    _ ← readFileContents $ path.join entry.fileName
 
 unsafe def isValidProperty ( name : String ) : IO (Except String Unit) := do
   Lean.searchPathRef.set compile_time_search_path%
@@ -122,16 +113,10 @@ unsafe def isValidProperty ( name : String ) : IO (Except String Unit) := do
 
       pure $ if result.1 then Except.ok () else Except.error "not Prop"
     catch ex =>
-      pure $ Except.error ex.toString 
+      pure $ Except.error ex.toString
   )
 
-def reportError (path : System.FilePath) (e : String) : IO Unit := do
-  IO.println s!"error in {path}: {e}"
-
-def reportWarning (path : System.FilePath) (e : String) : IO Unit := do
-  IO.println s!"warning in {path}: {e}"
-
-def paddedUid (p : Property) : String :=
+private def paddedUid (p : Property) : String :=
   let str := toString p.uid
   let paddingNeeded := max 0 (6 - str.length)
   let padding := "".pushn '0' paddingNeeded
@@ -153,10 +138,8 @@ unsafe def readProperties (path : System.FilePath) : IO (Std.HashMap String Prop
           | Except.error e => reportError entry.fileName e
           | Except.ok _ => result := result.insert (paddedUid p) p
         else
-          reportWarning entry.fileName "missing mathlib" 
+          reportWarning entry.fileName "missing mathlib"
 
   pure result
 
 end PiBase
-
-
