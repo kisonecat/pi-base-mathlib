@@ -87,6 +87,21 @@ private def readFileContents (path : System.FilePath) : IO (Except String Proper
     let result := Lean.Parsec.run propertyParser s
     pure result
 
+unsafe def findModuleName ( name : String ) : IO (Except String String) := do
+  Lean.searchPathRef.set compile_time_search_path%
+  Lean.withImportModules #[`Mathlib] {} (trustLevel := 1024) (fun env => do
+    let name' := Lean.Name.mkSimple name
+    match env.const2ModIdx.find? name' with
+    | some (x : Nat) => pure $ Except.ok (env.header.moduleNames[x]!.toString)
+    | none => pure $ Except.error "Could not find name"
+  )
+
+unsafe def findDocumentationURL ( name : String ) : IO String := do
+  match (← findModuleName name) with
+  | Except.error _ => pure $ s!"https://leanprover-community.github.io/mathlib4_docs/search.html?q={name}"
+  | Except.ok x => pure $ "https://leanprover-community.github.io/mathlib4_docs/" ++
+                          ("/".intercalate (x.splitOn ".")) ++ ".html#" ++ name
+
 unsafe def isValidProperty ( name : String ) : IO (Except String Unit) := do
   Lean.searchPathRef.set compile_time_search_path%
   Lean.withImportModules #[`Mathlib] {} (trustLevel := 1024) (fun env => do

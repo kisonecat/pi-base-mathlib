@@ -16,9 +16,10 @@ unsafe def runVerifyCmd (p : Parsed) : IO UInt32 := do
   Std.HashMap.forM (fun k v => do
     if let some m := v.mathlib then
       IO.println s!"{k} := {m}"
+      IO.println (← PiBase.findDocumentationURL m)
   ) props
   
-  let theorems ← PiBase.readTheorems theoremsPath
+  -- let theorems ← PiBase.readTheorems theoremsPath
 
   return 0
 
