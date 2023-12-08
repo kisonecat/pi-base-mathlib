@@ -3,7 +3,6 @@ import Lean.Expr
 import Lean.Meta
 import Lean.Environment
 import Mathlib
-
 import PiBase.Reference
 import PiBase.Logging
 
@@ -26,12 +25,12 @@ open Property
 
 open Lean.Parsec
 
-private def parseText : Lean.Parsec (Property → Property) := attempt do
+def parseText : Lean.Parsec (Property → Property) := attempt do
   skipString "---\n"
   let t ← manyChars anyChar
   pure $ λ p => { p with text := t }
 
-private def parseAlias : Lean.Parsec String := do
+def parseAlias : Lean.Parsec String := do
   ws
   skipChar '-'
   ws
@@ -39,31 +38,31 @@ private def parseAlias : Lean.Parsec String := do
   skipChar '\n'
   pure $ n
 
-private def parseReferences' : Lean.Parsec (Property → Property) := attempt do
+def parseReferences' : Lean.Parsec (Property → Property) := attempt do
   let xs ← parseReferences
   pure $ λ p => { p with refs := xs }
 
-private def parseAliases : Lean.Parsec (Property → Property) := attempt do
+def parseAliases : Lean.Parsec (Property → Property) := attempt do
   skipString "aliases:"
   ws
   let xs ← many $ parseAlias
   pure $ λ p => { p with aliases := xs.toList }
 
-private def parseName : Lean.Parsec (Property → Property) := attempt do
+def parseName : Lean.Parsec (Property → Property) := attempt do
   skipString "name:"
   ws
-  let n ← manyChars (satisfy (· != '\n'))
+  let n ← manyChars (satisfy (fun c => c != '\n'))
   skipChar '\n'
   pure $ λ p => { p with name := some n }
 
-private def parseMathlib : Lean.Parsec (Property → Property) := attempt do
+def parseMathlib : Lean.Parsec (Property → Property) := attempt do
   skipString "mathlib:"
   ws
   let n ← manyChars (satisfy (fun c => c != '\n'))
   skipChar '\n'
   pure $ λ p => { p with mathlib := some n }
 
-private def parseUid : Lean.Parsec Property := do
+def parseUid : Lean.Parsec Property := do
   skipString "uid:"
   ws
   skipChar 'P'
@@ -74,33 +73,28 @@ private def parseUid : Lean.Parsec Property := do
   | none => λ it => ParseResult.error it s!"could not parse number {d}"
   | some i => λ it => ParseResult.success it { uid := i : Property }
 
-private def propertyParser : Lean.Parsec Property := do
-  Lean.Parsec.skipString "---\n"
+def propertyParser : Lean.Parsec Property := do
   let p ← parseUid
   let fs ← many (parseAliases <|> parseName <|> parseReferences' <|> parseText <|> parseMathlib)
   pure $ fs.foldl (fun x f => f x) p
 
+def parser : Lean.Parsec Property := do
+  Lean.Parsec.skipString "---\n"
+  let p ← propertyParser
+  pure $ p
+
 -- Function to read the content of a single file into a string
-private def readFileContents (path : System.FilePath) : IO (Except String Property) := do
+def readFileContents (path : System.FilePath) : IO (Except String Property) := do
   IO.FS.withFile path IO.FS.Mode.read fun handle => do
     let s ← handle.readToEnd
-    let result := Lean.Parsec.run propertyParser s
+    let result := Lean.Parsec.run parser s
     pure result
 
-unsafe def findModuleName ( name : String ) : IO (Except String String) := do
-  Lean.searchPathRef.set compile_time_search_path%
-  Lean.withImportModules #[`Mathlib] {} (trustLevel := 1024) (fun env => do
-    let name' := Lean.Name.mkSimple name
-    match env.const2ModIdx.find? name' with
-    | some (x : Nat) => pure $ Except.ok (env.header.moduleNames[x]!.toString)
-    | none => pure $ Except.error "Could not find name"
-  )
-
-unsafe def findDocumentationURL ( name : String ) : IO String := do
-  match (← findModuleName name) with
-  | Except.error _ => pure $ s!"https://leanprover-community.github.io/mathlib4_docs/search.html?q={name}"
-  | Except.ok x => pure $ "https://leanprover-community.github.io/mathlib4_docs/" ++
-                          ("/".intercalate (x.splitOn ".")) ++ ".html#" ++ name
+def listFiles (path : System.FilePath) : IO Unit := do
+  let entries <- path.readDir
+  -- Iterate over the contents and print file names
+  for entry in entries do
+    _ ← readFileContents $ path.join entry.fileName
 
 unsafe def isValidProperty ( name : String ) : IO (Except String Unit) := do
   Lean.searchPathRef.set compile_time_search_path%
@@ -131,7 +125,7 @@ unsafe def isValidProperty ( name : String ) : IO (Except String Unit) := do
       pure $ Except.error ex.toString
   )
 
-private def paddedUid (p : Property) : String :=
+def paddedUid (p : Property) : String :=
   let str := toString p.uid
   let paddingNeeded := max 0 (6 - str.length)
   let padding := "".pushn '0' paddingNeeded

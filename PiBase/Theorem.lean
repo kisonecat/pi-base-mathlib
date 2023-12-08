@@ -1,23 +1,26 @@
-import Mathlib
-
 import Lean.Data.Parsec
-import Lean.Expr
-import Lean.Meta
-
 import PiBase.Reference
 import PiBase.Logging
+import Std
 
 namespace PiBase
 
-open Lean Core Elab Command
+open Lean
+
+inductive Expression where
+| negation : Expression → Expression
+| conjunction : List Expression → Expression
+| property : String → Expression
+| true : Expression
+deriving Repr
 
 structure Theorem where
   uid : Nat
   refs : List Reference := []
   converses : List String := []
   text : String := ""
-  hypothesis : List Lean.Expr := [Lean.Expr.bvar 0]
-  conclusion : Lean.Expr := Lean.Expr.bvar 0
+  hypothesis : Expression := Expression.true
+  conclusion : Expression := Expression.true
   mathlib : Option String := none
 deriving Repr
 
@@ -25,36 +28,36 @@ open Theorem
 
 open Lean.Parsec
 
-private def parseText : Lean.Parsec (Theorem → Theorem) := attempt do
+private def parseText : Lean.Parsec (Theorem → Theorem) := do
   skipString "---\n"
   let t ← manyChars anyChar
   pure $ λ p => { p with text := t }
 
-private def parseReferences' : Lean.Parsec (Theorem → Theorem) := attempt do
+private def parseReferences' : Lean.Parsec (Theorem → Theorem) := do
   let xs ← parseReferences
   pure $ λ p => { p with refs := xs }
 
-private def parseTheoremId : Lean.Parsec String := attempt do
+private def parseTheoremId : Lean.Parsec String := do
   skipString "T"
   let t <- manyChars digit
   pure $ "T" ++ t
 
-private def parseMathlib : Lean.Parsec (Theorem → Theorem) := attempt do
+private def parseMathlib : Lean.Parsec (Theorem → Theorem) := do
   skipString "mathlib:"
   ws
   let n ← manyChars (satisfy (fun c => c != '\n'))
   skipChar '\n'
   pure $ λ p => { p with mathlib := some n }
 
-private def parseConverse : Lean.Parsec String := attempt do
+private def parseConverse : Lean.Parsec String := do
   ws
-  skipString "-"
+  skipString "- "
   ws
   let v ← parseTheoremId
   ws
   pure v
 
-private def parseConverses : Lean.Parsec (Theorem → Theorem) := attempt do
+private def parseConverses : Lean.Parsec (Theorem → Theorem) := do
   skipString "converse:"
   ws
   let xs ← many $ parseConverse
@@ -67,17 +70,17 @@ private def parsePropertyId : Lean.Parsec String := do
   ws
   pure ("P" ++ d)
 
-private def parsePropertyExpr : Lean.Parsec Lean.Expr := do
+private def parsePropertyExpr : Lean.Parsec Expression := do
   let uid ← parsePropertyId
-  let expr := Lean.Expr.const uid []
+  let expr := Expression.property uid
   let trueOrFalse ← (pstring "true") <|> (pstring "false")
   ws
 
-  pure $ match trueOrFalse with 
+  pure $ match trueOrFalse with
   | "true" => expr
-  | _ => Lean.Expr.app (Lean.Expr.const `Not []) expr
+  | _ => Expression.negation expr
 
-private def parseAnd : Lean.Parsec (List Lean.Expr) := attempt do
+private def parseAnd : Lean.Parsec Expression := do
   ws
   skipString "and:"
   ws
@@ -86,22 +89,21 @@ private def parseAnd : Lean.Parsec (List Lean.Expr) := attempt do
     skipChar '-'
     ws
     pure $ ← parsePropertyExpr)
-  pure xs.toList
+  pure $ Expression.conjunction xs.toList
 
-private def parseHypothesis : Lean.Parsec (Theorem → Theorem) := attempt do
+private def parseHypothesis : Lean.Parsec (Theorem → Theorem) := do
   skipString "if:"
   ws
-  let h ← parseAnd <|> do 
-    pure [←parsePropertyExpr]
+  let h ← parseAnd <|> parsePropertyExpr
   pure $ λ p => { p with hypothesis := h }
 
-private def parseConclusion : Lean.Parsec (Theorem → Theorem) := attempt do
+private def parseConclusion : Lean.Parsec (Theorem → Theorem) := do
   skipString "then:"
   ws
   let expr ← parsePropertyExpr
   pure $ λ p => { p with conclusion := expr }
 
-private def parseUid : Lean.Parsec (Theorem → Theorem) := attempt do
+private def parseUid : Lean.Parsec (Theorem → Theorem) := do
   skipString "uid:"
   ws
   skipChar 'T'
@@ -119,7 +121,7 @@ private def theoremParser : Lean.Parsec Theorem := do
 
 private def removeComments (s : String) : String :=
   let lines := s.splitOn "\n"
-  let filteredLines := lines.filter (fun line => ¬ line.startsWith "#") 
+  let filteredLines := lines.filter (fun line => ¬ line.startsWith "#")
   String.intercalate "\n" filteredLines
 
 private def readFileContents (path : System.FilePath) : IO (Except String Theorem) := do
@@ -146,10 +148,31 @@ unsafe def readTheorems (path : System.FilePath) : IO (Std.HashMap String Theore
         reportError entry.fileName s!"uid {paddedUid p} does not agree with filename {entry.fileName}"
       else
         result := result.insert (paddedUid p) p
-        IO.println (repr p)
+        -- IO.println (repr p)
         if p.text == "" then
           reportError entry.fileName "no text"
 
   pure result
+
+unsafe def propertiesPresent (e : Expression) (props : Std.HashMap String Property) : Bool :=
+  match e with
+  | Expression.negation ne => propertiesPresent ne props
+  | Expression.conjunction es => es.all (fun x => propertiesPresent x props)
+  | Expression.property s => props.contains s
+  | Expression.true => True
+-- termination_by propertiesPresent e props => e
+-- decreasing_by sorry
+
+unsafe def renderConclusion : Expression → String
+| Expression.negation ne => s!"¬ ({renderConclusion ne})"
+| Expression.conjunction es => String.intercalate " ∧ " (es.map renderConclusion)
+| Expression.property s => s!"({s} X)"
+| Expression.true => ""
+
+unsafe def renderHypothesis : Expression → String
+| Expression.negation ne => s!"¬ ({renderConclusion ne})"
+| Expression.conjunction es => String.intercalate " → " (es.map renderConclusion)
+| Expression.property s => s!"({s} X)"
+| Expression.true => ""
 
 end PiBase
